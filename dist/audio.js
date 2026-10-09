@@ -1,0 +1,22 @@
+import {recordings,mountCredit,createRecordedAudio} from '/recordings.js';
+// Procedural weather sounds: generated locally, including when offline.
+export function createStormAudio(type) {
+ const clearCredit=mountCredit(type);
+ if(recordings[type]){const player=createRecordedAudio(type);return {update:player.update,destroy(){player.destroy();clearCredit?.();}};}
+ const button=document.getElementById('sound-toggle'),volume=document.getElementById('sound-volume'),label=document.getElementById('sound-status');
+ let ctx,master,bed,filter,noiseBuffer,timer,enabled=false,paused=false,visible=true,disposed=false,intensity=.5,nextEvent=0;
+ const sources=new Set();
+ const profiles={hurricane:[260,.8,.6],tornado:[130,1.4,.85],thunderstorm:[1900,.4,.28],blizzard:[700,1,.36],dust:[1100,.7,.27],hail:[2600,.4,.2],ice:[3300,.5,.12]};
+ function target(){return enabled&&!paused&&!document.hidden?Number(volume.value)/100*(.45+intensity*.55):0;}
+ function sync(){if(master){master.gain.setTargetAtTime(target(),ctx.currentTime,.07);filter.frequency.setTargetAtTime(profiles[type][0]*(.7+intensity*.6),ctx.currentTime,.3);}button.textContent=enabled?'השתקת הקול':'הפעלת צלילי הסופה';button.setAttribute('aria-pressed',String(enabled));label.textContent=enabled?(paused?'הקול מושהה עם הסופה':'צלילי הסופה פעילים'):'הקול כבוי';}
+ function burst(thunder=false){const now=ctx.currentTime,duration=thunder?3.8:type==='ice'?.12:.065;const src=ctx.createBufferSource(),f=ctx.createBiquadFilter(),g=ctx.createGain();src.buffer=noiseBuffer;src.loop=true;f.type=thunder?'lowpass':'bandpass';f.frequency.value=thunder?180: type==='ice'?2400:650+Math.random()*1500;f.Q.value=thunder?.7:3;g.gain.setValueAtTime(0,now);g.gain.linearRampToValueAtTime(thunder?.8:.16+intensity*.12,now+(thunder?.12:.004));g.gain.exponentialRampToValueAtTime(.0001,now+duration);src.connect(f).connect(g).connect(master);sources.add(src);src.onended=()=>{sources.delete(src);src.disconnect();f.disconnect();g.disconnect();};src.start(now,Math.random()*2);src.stop(now+duration+.02);}
+ function init(){const AC=window.AudioContext||window.webkitAudioContext;if(!AC)throw new Error('Web Audio unavailable');ctx=new AC();master=ctx.createGain();master.gain.value=0;const limiter=ctx.createDynamicsCompressor();limiter.threshold.value=-16;limiter.ratio.value=8;master.connect(limiter).connect(ctx.destination);
+ noiseBuffer=ctx.createBuffer(1,ctx.sampleRate*4,ctx.sampleRate);const data=noiseBuffer.getChannelData(0);let brown=0;for(let i=0;i<data.length;i++){const white=Math.random()*2-1;brown=(brown+.025*white)/1.025;data[i]=['hurricane','tornado'].includes(type)?brown*4:white*.55;}
+ bed=ctx.createBufferSource();bed.buffer=noiseBuffer;bed.loop=true;filter=ctx.createBiquadFilter();filter.type=['hurricane','tornado'].includes(type)?'lowpass':'bandpass';filter.frequency.value=profiles[type][0];filter.Q.value=profiles[type][1];const g=ctx.createGain();g.gain.value=profiles[type][2];bed.connect(filter).connect(g).connect(master);bed.start();
+ // Slow gusts instead of a constant unchanging hiss.
+ const gust=ctx.createOscillator(),depth=ctx.createGain();gust.frequency.value=type==='tornado'?.4:.12;depth.gain.value=profiles[type][2]*.25;gust.connect(depth).connect(g.gain);gust.start();sources.add(gust);sources.add(bed);
+ timer=setInterval(()=>{if(!target()||ctx.state!=='running')return;if(ctx.currentTime<nextEvent)return;if(type==='thunderstorm'){burst(true);nextEvent=ctx.currentTime+5+Math.random()*6;}else if(type==='hail'||type==='ice'){burst();nextEvent=ctx.currentTime+(type==='hail'?.1+Math.random()*.25:.7+Math.random()*1.5);}},100);}
+ button.onclick=async()=>{if(disposed)return;try{if(!ctx)init();enabled=!enabled;sync();if(enabled){await ctx.resume();if(disposed)return;nextEvent=ctx.currentTime+.6;sync();}}catch(e){enabled=false;sync();label.textContent='לא ניתן להפעיל קול כרגע. נסו שוב בדפדפן Chrome.';}};
+ volume.oninput=()=>{document.getElementById('sound-volume-value').value=volume.value+'%';sync();};const visibility=()=>sync();document.addEventListener('visibilitychange',visibility);sync();
+ return {update(p,i,v=true){paused=p;intensity=i;visible=v;sync();},destroy(){disposed=true;enabled=false;clearInterval(timer);document.removeEventListener('visibilitychange',visibility);sources.forEach(s=>{try{s.stop();}catch{}});if(ctx&&ctx.state!=='closed')ctx.close().catch(()=>{});button.onclick=null;volume.oninput=null;}};
+}
